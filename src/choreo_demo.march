@@ -1,0 +1,144 @@
+-- A three-role choreography, one process per role.
+--
+--   forge run --processes
+--
+-- `Order` is written once, from above. The compiler projects it to a typed
+-- API for each role, and each role's code below can only follow its own
+-- projection: send out of turn, skip a step or stop early, and it does not
+-- compile.
+mod ChoreoDemo do
+  needs IO
+  needs IO.Console
+  needs IO.Clock
+  needs IO.Spawn
+  needs Session.Live
+  needs ClusterNode.Live
+
+  @[endpoints]
+  protocol Order do
+    role Stock needs IO.Console
+    role Ledger needs IO.Console
+    loop do
+      want: Shop -> Stock : Int
+      choose by Stock:
+        have -> Stock -> Shop : Int
+                book: Stock -> Ledger : Int
+                booked: Ledger -> Shop : Int
+        out  -> Stock -> Shop : Int
+                skip: Stock -> Ledger : Int
+                stop
+      end
+    end
+  end
+
+  -- ── Stock: answers every `want`, and runs out after item 3 ───────────
+
+  mod Warehouse do
+    needs IO.Console
+    needs Session.Live
+    needs ClusterNode.Live
+
+    type Env = { stock : Int }
+
+    fn start(_con : Cap(IO.Console), _node : Cap(ClusterNode.Live)) : Env do
+      { stock: 3 }
+    end
+
+    fn stock(env : Env, s : Cap(Session.Live), con : Cap(IO.Console), st : Order_Stock.Entry) : Order_Stock.Yield do
+      Order_Stock.recv_Want(s, st, fn (item, st1) ->
+        if item <= env.stock do
+          println("stock:  item " ++ int_to_string(item) ++ " in stock")
+          let st2 = Order_Stock.choose_have(s, st1, item * 10)
+          stock(env, s, con, Order_Stock.send_Book(s, st2, item))
+        else
+          println("stock:  item " ++ int_to_string(item) ++ " sold out")
+          let st2 = Order_Stock.choose_out(s, st1, item)
+          Order_Stock.close(s, Order_Stock.send_Skip(s, st2, item))
+        end)
+    end
+  end
+
+  -- ── Ledger: books what Stock sells and tells Shop the running total ──
+
+  mod Books do
+    needs IO.Console
+    needs Session.Live
+    needs ClusterNode.Live
+
+    type Env = { start : Int }
+
+    fn start(_con : Cap(IO.Console), _node : Cap(ClusterNode.Live)) : Env do
+      { start: 0 }
+    end
+
+    fn ledger(env : Env, s : Cap(Session.Live), con : Cap(IO.Console), st : Order_Ledger.Entry) : Order_Ledger.Yield do
+      book(env.start, s, con, st)
+    end
+
+    pfn book(total : Int, s : Cap(Session.Live), con : Cap(IO.Console), st : Order_Ledger.Entry) : Order_Ledger.Yield do
+      Order_Ledger.offer_have_out(s, st,
+        fn (item, st1) ->
+          let t = total + item * 10
+          println("ledger: booked item " ++ int_to_string(item) ++ ", total " ++ int_to_string(t))
+          book(t, s, con, Order_Ledger.send_Booked(s, st1, t)),
+        fn (item, st1) ->
+          println("ledger: nothing to book for item " ++ int_to_string(item))
+          Order_Ledger.close(s, st1))
+    end
+  end
+
+  -- ── Shop: asks for items 1, 2, 3, ... until Stock runs out ───────────
+
+  mod Shop do
+    needs IO
+    needs IO.Console
+    needs IO.Clock
+    needs IO.Spawn
+    needs Session.Live
+    needs ClusterNode.Live
+
+    type Env = { started : Bool }
+
+    -- Offers open only after every pool's hook returns, so the session runs
+    -- in a task.
+    fn start(io : Cap(IO), node : Cap(ClusterNode.Live)) : Env do
+      let _ = task_spawn(fn _ -> run(io, node, 100))
+      { started: true }
+    end
+
+    fn shop(s : Cap(Session.Live), st : Order_Shop.Entry, item : Int) : Order_Shop.Yield do
+      println("shop:   want item " ++ int_to_string(item))
+      Order_Shop.offer_have_out(s, Order_Shop.send_Want(s, st, item),
+        fn (price, st1) ->
+          Order_Shop.recv_Booked(s, st1, fn (total, st2) ->
+            println("shop:   got it for " ++ int_to_string(price) ++ ", total " ++ int_to_string(total))
+            shop(s, st2, item + 1)),
+        fn (_item, st1) ->
+          println("shop:   sold out, done")
+          Order_Shop.close(s, st1))
+    end
+
+    -- One session every few seconds, so there is something to watch with
+    -- `forge observe`. The other processes' offers take a moment to reach
+    -- this node, so a session no one answers yet is retried.
+    fn run(io : Cap(IO), node : Cap(ClusterNode.Live), tries : Int) : Int do
+      match Order_Run.initiate_Shop(io, node, fn (s, st) -> shop(s, st, 1)) do
+        Ok(_) ->
+          println("shop:   session finished")
+          sleep_ms(3000)
+          run(io, node, 100)
+        Err(SessionNode.NoOffer(_, _)) ->
+          if tries <= 0 do
+            println("shop:   no Stock or Ledger answered")
+            1
+          else
+            sleep_ms(100)
+            run(io, node, tries - 1)
+          end
+        Err(e) ->
+          println("shop:   session failed: " ++ Order_Run.error_message(e))
+          1
+      end
+    end
+  end
+end

@@ -1,0 +1,17 @@
+# Three pools, one role each: `forge run --processes` starts one process per
+# pool, a cluster on this machine. There is no `main`; it is generated.
+
+[roles]
+"Order.Stock"  = { body = "ChoreoDemo.Warehouse.stock", capacity = 4 }
+"Order.Ledger" = { body = "ChoreoDemo.Books.ledger", capacity = 4 }
+
+[pool.warehouse]
+start  = "ChoreoDemo.Warehouse.start"
+serves = ["Order.Stock"]
+
+[pool.books]
+start  = "ChoreoDemo.Books.start"
+serves = ["Order.Ledger"]
+
+[pool.shop]
+start = "ChoreoDemo.Shop.start"
