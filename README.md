@@ -47,8 +47,9 @@ forge run --processes --hot-reload
 ```
 
 `topology.toml` places each role in its own pool, so `forge run --processes` starts three
-processes (`warehouse`, `books`, `shop`), a cluster on this machine. Shop runs a session
-across them every few seconds:
+processes (`warehouse`, `books`, `shop`), a cluster on this machine. Shop runs a narrated
+session across them every few seconds, and 8 workers run unprinted background sessions
+(about 60 a second) for the first 45 seconds (`DEMO_TRAFFIC`, `DEMO_TRAFFIC_SECONDS`):
 
 ```
 [shop-1] shop:   want item 1
@@ -61,7 +62,8 @@ across them every few seconds:
 [shop-1] shop:   sold out, done
 ```
 
-Ctrl-C drains and stops all three.
+Ctrl-C drains and stops all three. (Ctrl-C while the background traffic is still running
+can hang the drain; that is a March bug being fixed. Wait for the traffic to end.)
 
 ## Watch a node
 
@@ -92,7 +94,7 @@ Order_Stock.close(s, st2)
 ```
 expected `S_end` but got `S_send_Skip`. [type_mismatch]
 
-56 |           Order_Stock.close(s, st2)
+60 |           Order_Stock.close(s, st2)
                                     ^^^
 ```
 
@@ -101,5 +103,7 @@ turn, sending the wrong type, or skipping a reply are rejected the same way.
 
 ## The recording
 
-`demo.tape` is a [vhs](https://github.com/charmbracelet/vhs) script for the clip:
-`vhs demo.tape` renders `demo.mp4` and `demo.gif`.
+`demo.tape` is a [vhs](https://github.com/charmbracelet/vhs) script for the clip. Its
+`# CAPTION:` lines are the narration: `vhs demo.tape` renders `demo-raw.mp4`, and
+`python3 captions.py` (Pillow and ffmpeg) burns the captions into a band under the
+terminal and writes `demo.mp4` and `demo.gif`.
