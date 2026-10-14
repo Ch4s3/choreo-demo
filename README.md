@@ -2,6 +2,8 @@
 
 A three-role choreography in [March](https://march-lang.org), one OS process per role.
 
+![The protocol, a compile error from a one-line mistake, the session across three processes, and a live view of one node](demo.gif)
+
 ```march
 @[endpoints]
 protocol Order do
@@ -64,10 +66,11 @@ Ctrl-C drains and stops all three.
 ## Watch a node
 
 `--hot-reload` gives each process a read-only observe socket next to its reload socket.
-`forge run` prints where (`reload server listening on /tmp/march-forge-…/books-1.sock`):
+`forge run` prints where (`reload server listening on …/.forge/run/books-1.sock`; a long
+project path moves it under `/tmp/march-forge-…/`):
 
 ```
-forge observe --socket /tmp/march-forge-…/books-1.sock.observe
+forge observe --socket .forge/run/books-1.sock.observe
 ```
 
 opens a live view of that node (its actors, mailboxes, memory, schedulers and code epoch)
