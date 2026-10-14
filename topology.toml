@@ -2,8 +2,8 @@
 # pool, a cluster on this machine. There is no `main`; it is generated.
 
 [roles]
-"Order.Stock"  = { body = "ChoreoDemo.Warehouse.stock", capacity = 4 }
-"Order.Ledger" = { body = "ChoreoDemo.Books.ledger", capacity = 4 }
+"Order.Stock"  = { body = "ChoreoDemo.Warehouse.stock", capacity = 32 }
+"Order.Ledger" = { body = "ChoreoDemo.Books.ledger", capacity = 32 }
 
 [pool.warehouse]
 start  = "ChoreoDemo.Warehouse.start"

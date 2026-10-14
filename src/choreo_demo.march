@@ -31,6 +31,9 @@ mod ChoreoDemo do
     end
   end
 
+  -- Items 1, 2, 3, ... are the narrated session, printed by every role.
+  -- Items from 101 up are background traffic: the same protocol, unprinted.
+
   -- ── Stock: answers every `want`, and runs out after item 3 ───────────
 
   mod Warehouse do
@@ -46,15 +49,19 @@ mod ChoreoDemo do
 
     fn stock(env : Env, s : Cap(Session.Live), con : Cap(IO.Console), st : Order_Stock.Entry) : Order_Stock.Yield do
       Order_Stock.recv_Want(s, st, fn (item, st1) ->
-        if item <= env.stock do
-          println("stock:  item " ++ int_to_string(item) ++ " in stock")
-          let st2 = Order_Stock.choose_have(s, st1, item * 10)
+        if item % 100 <= env.stock do
+          say(item, "stock:  item " ++ int_to_string(item) ++ " in stock")
+          let st2 = Order_Stock.choose_have(s, st1, (item % 100) * 10)
           stock(env, s, con, Order_Stock.send_Book(s, st2, item))
         else
-          println("stock:  item " ++ int_to_string(item) ++ " sold out")
+          say(item, "stock:  item " ++ int_to_string(item) ++ " sold out")
           let st2 = Order_Stock.choose_out(s, st1, item)
           Order_Stock.close(s, Order_Stock.send_Skip(s, st2, item))
         end)
+    end
+
+    pfn say(item : Int, line : String) : () do
+      if item < 100 do println(line) else () end
     end
   end
 
@@ -78,12 +85,16 @@ mod ChoreoDemo do
     pfn book(total : Int, s : Cap(Session.Live), con : Cap(IO.Console), st : Order_Ledger.Entry) : Order_Ledger.Yield do
       Order_Ledger.offer_have_out(s, st,
         fn (item, st1) ->
-          let t = total + item * 10
-          println("ledger: booked item " ++ int_to_string(item) ++ ", total " ++ int_to_string(t))
+          let t = total + (item % 100) * 10
+          say(item, "ledger: booked item " ++ int_to_string(item) ++ ", total " ++ int_to_string(t))
           book(t, s, con, Order_Ledger.send_Booked(s, st1, t)),
         fn (item, st1) ->
-          println("ledger: nothing to book for item " ++ int_to_string(item))
+          say(item, "ledger: nothing to book for item " ++ int_to_string(item))
           Order_Ledger.close(s, st1))
+    end
+
+    pfn say(item : Int, line : String) : () do
+      if item < 100 do println(line) else () end
     end
   end
 
@@ -93,17 +104,54 @@ mod ChoreoDemo do
     needs IO
     needs IO.Console
     needs IO.Clock
+    needs IO.Mut
     needs IO.Spawn
     needs Session.Live
     needs ClusterNode.Live
 
     type Env = { started : Bool }
 
-    -- Offers open only after every pool's hook returns, so the session runs
-    -- in a task.
+    -- Offers open only after every pool's hook returns, so the sessions run
+    -- in tasks: the narrated one, DEMO_TRAFFIC background workers (default
+    -- 8) for DEMO_TRAFFIC_SECONDS (default 45), and a reporter that prints
+    -- how many background sessions finished.
     fn start(io : Cap(IO), node : Cap(ClusterNode.Live)) : Env do
+      let done = Vault.new("demo_traffic")
+      let until = unix_time_ms() + 1000 * Env.get_int("DEMO_TRAFFIC_SECONDS", 45)
       let _ = task_spawn(fn _ -> run(io, node, 100))
+      let _ = List.map(List.range(0, Env.get_int("DEMO_TRAFFIC", 8)), fn _ ->
+        task_spawn(fn _ -> traffic(io, node, done, until)))
+      let _ = task_spawn(fn _ -> report(done, 0))
       { started: true }
+    end
+
+    -- A background session: the same protocol from item 101, unprinted.
+    pfn quiet(s : Cap(Session.Live), st : Order_Shop.Entry, item : Int) : Order_Shop.Yield do
+      Order_Shop.offer_have_out(s, Order_Shop.send_Want(s, st, item),
+        fn (_price, st1) ->
+          Order_Shop.recv_Booked(s, st1, fn (_total, st2) -> quiet(s, st2, item + 1)),
+        fn (_item, st1) -> Order_Shop.close(s, st1))
+    end
+
+    pfn traffic(io : Cap(IO), node : Cap(ClusterNode.Live), done : Vault(Int), until : Int) : Int do
+      if unix_time_ms() >= until do 0
+      else
+        match Order_Run.initiate_Shop(io, node, fn (s, st) -> quiet(s, st, 101)) do
+          Ok(_) -> let _ = Vault.incr(done, "sessions", 1)
+                   ()
+          Err(_) -> sleep_ms(100)
+        end
+        traffic(io, node, done, until)
+      end
+    end
+
+    pfn report(done : Vault(Int), last : Int) : Int do
+      sleep_ms(2000)
+      let now = Vault.get_or(done, "sessions", 0)
+      if now > last do
+        println("shop:   + " ++ int_to_string(now - last) ++ " background sessions in 2 s")
+      else () end
+      report(done, now)
     end
 
     fn shop(s : Cap(Session.Live), st : Order_Shop.Entry, item : Int) : Order_Shop.Yield do
@@ -125,7 +173,7 @@ mod ChoreoDemo do
       match Order_Run.initiate_Shop(io, node, fn (s, st) -> shop(s, st, 1)) do
         Ok(_) ->
           println("shop:   session finished")
-          sleep_ms(3000)
+          sleep_ms(4000)
           run(io, node, 100)
         Err(SessionNode.NoOffer(_, _)) ->
           if tries <= 0 do

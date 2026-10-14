@@ -1,3 +1,6 @@
 .forge/
 .march/
 *.ll
+demo-raw.mp4
+run.log
+build.log
