@@ -47,7 +47,8 @@ mod ChoreoDemo do
       { stock: 3 }
     end
 
-    fn stock(env : Env, s : Cap(Session.Live), con : Cap(IO.Console), st : Order_Stock.Entry) : Order_Stock.Yield do
+    fn stock(env : Env, s : Cap(Session.Live), con : Cap(IO.Console),
+             st : Order_Stock.Entry) : Order_Stock.Yield do
       Order_Stock.recv_Want(s, st, fn (item, st1) ->
         if item % 100 <= env.stock do
           say(item, "stock:  item " ++ int_to_string(item) ++ " in stock")
